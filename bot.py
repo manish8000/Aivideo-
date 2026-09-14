@@ -13,7 +13,6 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 class HealthCheckHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
-        self.send_header('Content-type', 'text/plain')
         self.end_headers()
         self.wfile.write(b"Bot Healthy!")
 
@@ -38,7 +37,6 @@ async def generate_speech(text, role):
     return path
 
 def build_animated_video(img_path, audio_paths, output_path="final_video.mp4"):
-    # दोनों ऑडियो को जोड़ना
     clips = [AudioFileClip(p) for p in audio_paths if os.path.exists(p)]
     if not clips:
         raise Exception("ऑडियो तैयार नहीं हो सका")
@@ -46,17 +44,24 @@ def build_animated_video(img_path, audio_paths, output_path="final_video.mp4"):
     final_audio = concatenate_audioclips(clips)
     duration = final_audio.duration
 
-    # इमेज पर स्मूथ कार्टून ज़ूम/मोशन लगाना
+    # 1. इमेज को स्टैंडर्ड 9:16 रील्स फॉर्मेट (720x1280) में रीसाइज करना ताकि पिक्सल ग्लिच न आए
     clip = ImageClip(img_path).set_duration(duration)
-    clip = clip.resize(lambda t: 1 + 0.04 * (t / duration))  # स्लो डायनामिक ज़ूम
+    clip = clip.resize(newsize=(720, 1280))
+    
+    # 2. स्मूथ ज़ूम इफ़ेक्ट
+    clip = clip.resize(lambda t: 1 + 0.03 * (t / duration))
+    # ऑड पिक्सल्स को रोकने के लिए क्रॉप सेंटर
+    clip = clip.crop(x_center=clip.w/2, y_center=clip.h/2, width=720, height=1280)
     clip = clip.set_audio(final_audio)
 
+    # 3. yuv420p पिक्सल फॉर्मेट अनिवार्य है ताकि फोन और टेलीग्राम पर क्रिस्टल क्लियर चले
     clip.write_videofile(
         output_path,
         fps=24,
         codec="libx264",
         audio_codec="aac",
-        preset="ultrafast",
+        ffmpeg_params=['-pix_fmt', 'yuv420p'],
+        preset="fast",
         logger=None
     )
     return output_path
@@ -95,7 +100,7 @@ async def process_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
             a2 = await generate_speech(duck_line, "duck")
             audio_files.append(a2)
 
-        await status.edit_text("2/2: वीडियो बन रहा है...")
+        await status.edit_text("2/2: वीडियो रेंडर हो रहा है...")
 
         loop = asyncio.get_event_loop()
         video_path = await loop.run_in_executor(None, build_animated_video, img_path, audio_files)
@@ -117,4 +122,4 @@ if __name__ == "__main__":
         app.add_handler(CommandHandler("start", start))
         app.add_handler(MessageHandler(filters.PHOTO & filters.Caption(), process_video))
         app.run_polling()
-        
+    
