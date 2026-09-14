@@ -1,5 +1,6 @@
 python-telegram-bot
 replicate
-rembg
+rembg[cpu]
+onnxruntime
 pillow
 requests
