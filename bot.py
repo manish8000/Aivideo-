@@ -8,78 +8,49 @@ import replicate
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
 
-# अपनी API Keys यहाँ डालें
-TELEGRAM_BOT_TOKEN = "YOUR_TELEGRAM_BOT_TOKEN"
-REPLICATE_API_TOKEN = "YOUR_REPLICATE_API_TOKEN"
-
-os.environ["REPLICATE_API_TOKEN"] = REPLICATE_API_TOKEN
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+REPLICATE_API_TOKEN = os.getenv("REPLICATE_API_TOKEN")
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("नमस्ते! मुझे अपनी एक साफ फोटो भेजिए, मैं उसका कार्टून PNG बनाकर दूंगा।")
+    await update.message.reply_text("नमस्ते! फोटो भेजें, मैं पारदर्शी कार्टून PNG बना दूंगा।")
 
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    status_msg = await update.message.reply_text("फोटो मिल गई! कार्टून बनाने की प्रक्रिया शुरू हो रही है...")
-
+    status_msg = await update.message.reply_text("प्रोसेसिंग शुरू हो रही है...")
     try:
-        # 1. Telegram से फोटो डाउनलोड करना
         photo_file = await update.message.photo[-1].get_file()
-        input_image_path = "user_photo.jpg"
-        await photo_file.download_to_drive(input_image_path)
+        input_path = "input.jpg"
+        await photo_file.download_to_drive(input_path)
 
-        await status_msg.edit_text("चेहरे को कार्टून में बदला जा रहा है (AI Processing)...")
-
-        # 2. Replicate API (Face-to-Sticker मॉडल) को फोटो भेजना
-        with open(input_image_path, "rb") as image_data:
+        await status_msg.edit_text("कार्टून स्टाइल बनाया जा रहा है...")
+        with open(input_path, "rb") as img:
             output = replicate.run(
                 "fofr/face-to-sticker:76298fc8dabb42534570d988e5625bde3f12603ac1a8123d4ac1739fb5c8b5df",
-                input={
-                    "image": image_data,
-                    "steps": 20,
-                    "prompt": "cartoon character, sharp vector illustration, clean lines",
-                    "negative_prompt": "ugly, blurry, low quality, distorted"
-                }
+                input={"image": img, "steps": 20, "prompt": "cartoon vector sticker"}
             )
 
-        # AI आउटपुट URL से इमेज डाउनलोड करना
-        generated_image_url = output[0] if isinstance(output, list) else output
-        response = requests.get(generated_image_url)
-        cartoon_image = Image.open(io.BytesIO(response.content))
+        img_url = output[0] if isinstance(output, list) else output
+        res = requests.get(img_url)
+        cartoon = Image.open(io.BytesIO(res.content))
 
-        await status_msg.edit_text("बैकग्राउंड हटाया जा रहा है (Transparent PNG)...")
+        await status_msg.edit_text("बैकग्राउंड हटाया जा रहा है...")
+        output_png = remove(cartoon)
+        out_path = "sticker.png"
+        output_png.save(out_path, format="PNG")
 
-        # 3. बैकग्राउंड हटाकर पारदर्शी PNG बनाना
-        output_png = remove(cartoon_image)
-        output_path = "final_sticker.png"
-        output_png.save(output_path, format="PNG")
+        with open(out_path, "rb") as f:
+            await update.message.reply_document(document=f, filename="cartoon.png")
 
-        await status_msg.edit_text("PNG तैयार है, भेजी जा रही है...")
-
-        # 4. यूजर को बिना कंप्रेस किए डॉक्यूमेंट के रूप में भेजना
-        with open(output_path, "rb") as final_file:
-            await update.message.reply_document(
-                document=final_file,
-                filename="cartoon_custom.png",
-                caption="ये रहा आपका कार्टून PNG!"
-            )
-
-        # अस्थायी फाइलें हटाना
-        if os.path.exists(input_image_path):
-            os.remove(input_image_path)
-        if os.path.exists(output_path):
-            os.remove(output_path)
-
+        if os.path.exists(input_path): os.remove(input_path)
+        if os.path.exists(out_path): os.remove(out_path)
     except Exception as e:
-        await update.message.reply_text(f"त्रुटि आई: {str(e)}")
+        await update.message.reply_text(f"त्रुटि: {e}")
 
 def main():
     app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).build()
-
     app.add_handler(CommandHandler("start", start))
     app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
-
-    print("बॉट शुरू हो गया है...")
     app.run_polling()
 
 if __name__ == "__main__":
     main()
-    
+            
