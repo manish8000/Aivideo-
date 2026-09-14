@@ -1,133 +1,85 @@
 import os
-import asyncio
-import threading
-from http.server import HTTPServer, BaseHTTPRequestHandler
+import io
+import requests
+from PIL import Image
+from rembg import remove
+import replicate
+
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
-import edge_tts
-from moviepy.editor import ImageClip, AudioFileClip, concatenate_audioclips
 
-BOT_TOKEN = os.getenv("BOT_TOKEN")
+# अपनी API Keys यहाँ डालें
+TELEGRAM_BOT_TOKEN = "YOUR_TELEGRAM_BOT_TOKEN"
+REPLICATE_API_TOKEN = "YOUR_REPLICATE_API_TOKEN"
 
-# Koyeb Health Check
-class HealthCheckHandler(BaseHTTPRequestHandler):
-    def do_GET(self):
-        self.send_response(200)
-        self.end_headers()
-        self.wfile.write(b"Bot Healthy!")
-
-def run_web():
-    server = HTTPServer(('0.0.0.0', 8000), HealthCheckHandler)
-    server.serve_forever()
+os.environ["REPLICATE_API_TOKEN"] = REPLICATE_API_TOKEN
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "फोटो भेजिए और कैप्शन में डायलॉग लिखें:\n\n"
-        "Girl: अरे बत्तख भाई, चश्मा कैसा लगा?\n"
-        "Duck: क्वैक क्वैक! बहुत बढ़िया लगा!\n\n"
-        "💡 टिप: अगर यूट्यूब लंबा वीडियो चाहिए तो कैप्शन के अंत में #long लिखें!"
-    )
+    await update.message.reply_text("नमस्ते! मुझे अपनी एक साफ फोटो भेजिए, मैं उसका कार्टून PNG बनाकर दूंगा।")
 
-async def generate_speech(text, role):
-    path = f"{role}_temp.mp3"
-    if role == "duck":
-        comm = edge_tts.Communicate(text, "hi-IN-MadhurNeural", pitch="+35Hz", rate="+10%")
-    else:
-        comm = edge_tts.Communicate(text, "hi-IN-SwaraNeural", pitch="+15Hz", rate="+5%")
-    await comm.save(path)
-    return path
+async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    status_msg = await update.message.reply_text("फोटो मिल गई! कार्टून बनाने की प्रक्रिया शुरू हो रही है...")
 
-def build_animated_video(img_path, audio_paths, is_long=False, output_path="final_video.mp4"):
-    clips = [AudioFileClip(p) for p in audio_paths if os.path.exists(p)]
-    if not clips:
-        raise Exception("ऑडियो तैयार नहीं हो सका")
-    
-    final_audio = concatenate_audioclips(clips)
-    duration = final_audio.duration
-
-    # फ़ॉर्मेट साइज़: Long वीडियो के लिए 1280x720, Shorts के लिए 720x1280
-    target_w, target_h = (1280, 720) if is_long else (720, 1280)
-
-    clip = ImageClip(img_path).set_duration(duration)
-    clip = clip.resize(newsize=(target_w, target_h))
-    
-    # स्मूथ डायनामिक ज़ूम
-    clip = clip.resize(lambda t: 1 + 0.03 * (t / duration))
-    clip = clip.crop(x_center=clip.w/2, y_center=clip.h/2, width=target_w, height=target_h)
-    clip = clip.set_audio(final_audio)
-
-    # yuv420p पिक्सल फॉर्मेट (ग्लिच-फ्री वीडियो के लिए अनिवार्य)
-    clip.write_videofile(
-        output_path,
-        fps=24,
-        codec="libx264",
-        audio_codec="aac",
-        ffmpeg_params=['-pix_fmt', 'yuv420p'],
-        preset="fast",
-        logger=None
-    )
-    return output_path
-
-async def process_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    msg = update.message
-    if not msg.photo or not msg.caption:
-        await msg.reply_text("कृपया फोटो के साथ डायलॉग भेजें!")
-        return
-
-    caption = msg.caption.strip()
-    is_long = "#long" in caption.lower()
-    
-    # हैशटैग हटाकर क्लीन डायलॉग निकालना
-    clean_caption = caption.replace("#long", "").replace("#shorts", "").strip()
-
-    girl_line = ""
-    duck_line = ""
-
-    for line in clean_caption.split("\n"):
-        clean = line.strip()
-        if clean.lower().startswith("girl:"):
-            girl_line = clean.split(":", 1)[1].strip()
-        elif clean.lower().startswith("duck:"):
-            duck_line = clean.split(":", 1)[1].strip()
-
-    if not girl_line and not duck_line:
-        girl_line = clean_caption
-
-    status = await msg.reply_text("1/2: आवाज़ें तैयार हो रही हैं...")
-    photo_file = await msg.photo[-1].get_file()
-    img_path = "input_char.jpg"
-    await photo_file.download_to_drive(img_path)
-
-    audio_files = []
     try:
-        if girl_line:
-            a1 = await generate_speech(girl_line, "girl")
-            audio_files.append(a1)
-        if duck_line:
-            a2 = await generate_speech(duck_line, "duck")
-            audio_files.append(a2)
+        # 1. Telegram से फोटो डाउनलोड करना
+        photo_file = await update.message.photo[-1].get_file()
+        input_image_path = "user_photo.jpg"
+        await photo_file.download_to_drive(input_image_path)
 
-        format_name = "Long Video (16:9)" if is_long else "Shorts (9:16)"
-        await status.edit_text(f"2/2: {format_name} वीडियो बन रहा है...")
+        await status_msg.edit_text("चेहरे को कार्टून में बदला जा रहा है (AI Processing)...")
 
-        loop = asyncio.get_event_loop()
-        video_path = await loop.run_in_executor(None, build_animated_video, img_path, audio_files, is_long)
+        # 2. Replicate API (Face-to-Sticker मॉडल) को फोटो भेजना
+        with open(input_image_path, "rb") as image_data:
+            output = replicate.run(
+                "fofr/face-to-sticker:76298fc8dabb42534570d988e5625bde3f12603ac1a8123d4ac1739fb5c8b5df",
+                input={
+                    "image": image_data,
+                    "steps": 20,
+                    "prompt": "cartoon character, sharp vector illustration, clean lines",
+                    "negative_prompt": "ugly, blurry, low quality, distorted"
+                }
+            )
 
-        await update.message.reply_video(
-            video=open(video_path, 'rb'),
-            caption=f"🎬 आपका कार्टून {format_name} तैयार है!"
-        )
-        await status.delete()
+        # AI आउटपुट URL से इमेज डाउनलोड करना
+        generated_image_url = output[0] if isinstance(output, list) else output
+        response = requests.get(generated_image_url)
+        cartoon_image = Image.open(io.BytesIO(response.content))
+
+        await status_msg.edit_text("बैकग्राउंड हटाया जा रहा है (Transparent PNG)...")
+
+        # 3. बैकग्राउंड हटाकर पारदर्शी PNG बनाना
+        output_png = remove(cartoon_image)
+        output_path = "final_sticker.png"
+        output_png.save(output_path, format="PNG")
+
+        await status_msg.edit_text("PNG तैयार है, भेजी जा रही है...")
+
+        # 4. यूजर को बिना कंप्रेस किए डॉक्यूमेंट के रूप में भेजना
+        with open(output_path, "rb") as final_file:
+            await update.message.reply_document(
+                document=final_file,
+                filename="cartoon_custom.png",
+                caption="ये रहा आपका कार्टून PNG!"
+            )
+
+        # अस्थायी फाइलें हटाना
+        if os.path.exists(input_image_path):
+            os.remove(input_image_path)
+        if os.path.exists(output_path):
+            os.remove(output_path)
 
     except Exception as e:
-        await status.edit_text(f"एरर आया: {str(e)}")
+        await update.message.reply_text(f"त्रुटि आई: {str(e)}")
+
+def main():
+    app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).build()
+
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
+
+    print("बॉट शुरू हो गया है...")
+    app.run_polling()
 
 if __name__ == "__main__":
-    threading.Thread(target=run_web, daemon=True).start()
-
-    if BOT_TOKEN:
-        app = ApplicationBuilder().token(BOT_TOKEN).build()
-        app.add_handler(CommandHandler("start", start))
-        app.add_handler(MessageHandler(filters.PHOTO & filters.Caption(), process_video))
-        app.run_polling()
-        
+    main()
+    
