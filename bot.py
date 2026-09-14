@@ -8,7 +8,7 @@ from gradio_client import Client, handle_file
 import edge_tts
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-HF_TOKEN = os.getenv("HF_TOKEN")  # HuggingFace फ्री टोकन (401 ब्लॉक बायपास करने के लिए)
+HF_TOKEN = os.getenv("HF_TOKEN")
 
 # Koyeb Health Check
 class HealthCheckHandler(BaseHTTPRequestHandler):
@@ -39,7 +39,6 @@ async def generate_speech(text, role):
     return output_path
 
 def render_lip_sync(image_path, audio_path):
-    # एक्टिव और वेरिफाइड स्पेस लिस्ट
     working_spaces = [
         "akhaliq/SadTalker",
         "camenduru/SadTalker"
@@ -48,7 +47,8 @@ def render_lip_sync(image_path, audio_path):
     last_err = ""
     for space in working_spaces:
         try:
-            client = Client(space, hf_token=HF_TOKEN) if HF_TOKEN else Client(space)
+            # gradio_client में सही पैरामीटर 'token' होता है
+            client = Client(space, token=HF_TOKEN) if HF_TOKEN else Client(space)
             res = client.predict(
                 source_image=handle_file(image_path),
                 driven_audio=handle_file(audio_path),
@@ -87,7 +87,6 @@ async def process_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await photo_file.download_to_drive(img_path)
 
     try:
-        # आवाज तैयार
         if girl_line:
             audio_path = await generate_speech(girl_line, "girl")
         else:
@@ -95,7 +94,6 @@ async def process_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         await status.edit_text("2/3: वीडियो रेंडर हो रहा है (SadTalker)...")
 
-        # ऑथेंटिकेटेड वीडियो रेंडर
         loop = asyncio.get_event_loop()
         video_path = await loop.run_in_executor(None, render_lip_sync, img_path, audio_path)
 
