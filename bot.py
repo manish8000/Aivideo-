@@ -1,14 +1,15 @@
 import os
+import asyncio
 import threading
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
 from gradio_client import Client, handle_file
+import edge_tts
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-GIRL_VOICE = "my_voice.mp3"
-DUCK_VOICE = "duck_voice.mp3"
 
+# Koyeb Health Check Handler
 class HealthCheckHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
@@ -22,15 +23,31 @@ def run_web():
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "फोटो भेजिए और कैप्शन में इस फॉर्मेट में लिखें:\n\n"
-        "Girl: अरे बत्तख भाई, चश्मा कैसा लगा?\n"
-        "Duck: क्वैक क्वैक! बहुत बढ़िया लगा!"
+        "फोटो भेजिए और कैप्शन में डायलॉग लिखें:\n\n"
+        "Girl: अरे बत्तख भाई, तुम्हारा चश्मा तो बहुत मस्त है!\n"
+        "Duck: क्वैक क्वैक! मैं बहुत कूल हूँ!"
     )
+
+async def generate_speech(text, voice_role):
+    # Girl के लिए क्यूट हिंदी आवाज (Swara), Duck के लिए थोड़ी तेज पिच वाली फनी आवाज
+    if voice_role == "girl":
+        voice = "hi-IN-SwaraNeural"
+        pitch = "+15Hz"
+        rate = "+5%"
+    else:
+        voice = "hi-IN-MadhurNeural"
+        pitch = "+35Hz"
+        rate = "+15%"
+        
+    output_path = f"{voice_role}_audio.mp3"
+    communicate = edge_tts.Communicate(text, voice, pitch=pitch, rate=rate)
+    await communicate.save(output_path)
+    return output_path
 
 async def process_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.message
     if not msg.photo or not msg.caption:
-        await msg.reply_text("कृपया फोटो और डायलॉग दोनों भेजें!")
+        await msg.reply_text("कृपया फोटो और कैप्शन दोनों भेजें!")
         return
 
     caption = msg.caption.strip()
@@ -44,52 +61,28 @@ async def process_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
             duck_line = line.split(":", 1)[1].strip()
 
     if not girl_line and not duck_line:
-        await msg.reply_text("कृपया 'Girl:' और 'Duck:' लिखकर डायलॉग भेजें।")
-        return
+        # अगर सिर्फ सादा टेक्स्ट भेजा हो तो उसे Girl का डायलॉग मान लेंगे
+        girl_line = caption
 
-    status = await msg.reply_text("1/3: आवाज़ तैयार हो रही है...")
+    status = await msg.reply_text("1/3: आवाज तैयार हो रही है...")
     photo_file = await msg.photo[-1].get_file()
     img_path = "input_char.jpg"
     await photo_file.download_to_drive(img_path)
 
     try:
-        # F5-TTS का प्राइमरी और बैकअप स्पेस
-        try:
-            tts_client = Client("SWivid/F5-TTS")
-        except Exception:
-            tts_client = Client("hf-audio/F5-TTS")
+        # 1. फ्री और फास्ट वॉइस जेनरेशन (कोई HuggingFace एरर नहीं)
+        if girl_line:
+            audio_path = await generate_speech(girl_line, "girl")
+        else:
+            audio_path = await generate_speech(duck_line, "duck")
 
-        active_audio = None
+        await status.edit_text("2/3: वीडियो रेंडर हो रहा है (SadTalker)...")
 
-        # 1. बच्ची की आवाज
-        if girl_line and os.path.exists(GIRL_VOICE):
-            res1 = tts_client.predict(
-                ref_audio_orig=handle_file(GIRL_VOICE),
-                ref_text="sample audio",
-                gen_text=girl_line,
-                remove_silence=False,
-                api_name="/basic_tts"
-            )
-            active_audio = res1[0]
-
-        # 2. बत्तख की आवाज (अगर बच्ची की लाइन नहीं है तो बत्तख का ऑडियो)
-        if not active_audio and duck_line and os.path.exists(DUCK_VOICE):
-            res2 = tts_client.predict(
-                ref_audio_orig=handle_file(DUCK_VOICE),
-                ref_text="sample audio",
-                gen_text=duck_line,
-                remove_silence=False,
-                api_name="/basic_tts"
-            )
-            active_audio = res2[0]
-
-        await status.edit_text("2/3: वीडियो रेंडर हो रहा है...")
-
-        # लिप-सिंक स्पेस
+        # 2. लिप-सिंक
         anim_client = Client("vinthony/SadTalker")
         video_res = anim_client.predict(
             source_image=handle_file(img_path),
-            driven_audio=handle_file(active_audio),
+            driven_audio=handle_file(audio_path),
             fn_index=0
         )
         video_path = video_res['video'] if isinstance(video_res, dict) else video_res
@@ -98,7 +91,7 @@ async def process_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await msg.reply_video(video=open(video_path, 'rb'))
 
     except Exception as e:
-        await msg.reply_text(f"एरर आया: {str(e)}\n\n(HuggingFace स्पेस बिजी हो सकता है, 1-2 मिनट बाद दोबारा कोशिश करें)")
+        await msg.reply_text(f"एरर: {str(e)}")
 
 if __name__ == "__main__":
     threading.Thread(target=run_web, daemon=True).start()
