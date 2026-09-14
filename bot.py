@@ -39,22 +39,40 @@ async def generate_speech(text, role):
     return output_path
 
 def render_lip_sync(image_path, audio_path):
+    # वर्तमान में एक्टिव SadTalker Spaces
     working_spaces = [
-        "akhaliq/SadTalker",
-        "camenduru/SadTalker"
+        "Winfred/SadTalker",
+        "vinthony/SadTalker-video"
     ]
     
     last_err = ""
     for space in working_spaces:
         try:
-            # gradio_client में सही पैरामीटर 'token' होता है
             client = Client(space, token=HF_TOKEN) if HF_TOKEN else Client(space)
             res = client.predict(
                 source_image=handle_file(image_path),
                 driven_audio=handle_file(audio_path),
-                fn_index=0
+                preprocess_type='crop',
+                is_still_mode=False,
+                enhancer=None,
+                batch_size=1,
+                size_of_image=256,
+                pose_style=0,
+                facerender='facevid2vid',
+                exp_weight=1.0,
+                use_ref_video=False,
+                ref_video=None,
+                ref_info='pose',
+                use_idle_mode=False,
+                length_of_audio=0,
+                use_blink=True,
+                api_name="/test_app"
             )
-            return res['video'] if isinstance(res, dict) else res
+            if isinstance(res, (tuple, list)):
+                return res[0]
+            elif isinstance(res, dict):
+                return res.get('video')
+            return res
         except Exception as e:
             last_err = str(e)
             continue
@@ -92,7 +110,7 @@ async def process_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             audio_path = await generate_speech(duck_line, "duck")
 
-        await status.edit_text("2/3: वीडियो रेंडर हो रहा है (SadTalker)...")
+        await status.edit_text("2/3: वीडियो रेंडर हो रहा है...")
 
         loop = asyncio.get_event_loop()
         video_path = await loop.run_in_executor(None, render_lip_sync, img_path, audio_path)
