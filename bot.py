@@ -24,7 +24,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "फोटो भेजिए और कैप्शन में डायलॉग लिखें:\n\n"
         "Girl: अरे बत्तख भाई, चश्मा कैसा लगा?\n"
-        "Duck: क्वैक क्वैक! बहुत बढ़िया लगा!"
+        "Duck: क्वैक क्वैक! बहुत बढ़िया लगा!\n\n"
+        "💡 टिप: अगर यूट्यूब लंबा वीडियो चाहिए तो कैप्शन के अंत में #long लिखें!"
     )
 
 async def generate_speech(text, role):
@@ -36,7 +37,7 @@ async def generate_speech(text, role):
     await comm.save(path)
     return path
 
-def build_animated_video(img_path, audio_paths, output_path="final_video.mp4"):
+def build_animated_video(img_path, audio_paths, is_long=False, output_path="final_video.mp4"):
     clips = [AudioFileClip(p) for p in audio_paths if os.path.exists(p)]
     if not clips:
         raise Exception("ऑडियो तैयार नहीं हो सका")
@@ -44,17 +45,18 @@ def build_animated_video(img_path, audio_paths, output_path="final_video.mp4"):
     final_audio = concatenate_audioclips(clips)
     duration = final_audio.duration
 
-    # 1. इमेज को स्टैंडर्ड 9:16 रील्स फॉर्मेट (720x1280) में रीसाइज करना ताकि पिक्सल ग्लिच न आए
+    # फ़ॉर्मेट साइज़: Long वीडियो के लिए 1280x720, Shorts के लिए 720x1280
+    target_w, target_h = (1280, 720) if is_long else (720, 1280)
+
     clip = ImageClip(img_path).set_duration(duration)
-    clip = clip.resize(newsize=(720, 1280))
+    clip = clip.resize(newsize=(target_w, target_h))
     
-    # 2. स्मूथ ज़ूम इफ़ेक्ट
+    # स्मूथ डायनामिक ज़ूम
     clip = clip.resize(lambda t: 1 + 0.03 * (t / duration))
-    # ऑड पिक्सल्स को रोकने के लिए क्रॉप सेंटर
-    clip = clip.crop(x_center=clip.w/2, y_center=clip.h/2, width=720, height=1280)
+    clip = clip.crop(x_center=clip.w/2, y_center=clip.h/2, width=target_w, height=target_h)
     clip = clip.set_audio(final_audio)
 
-    # 3. yuv420p पिक्सल फॉर्मेट अनिवार्य है ताकि फोन और टेलीग्राम पर क्रिस्टल क्लियर चले
+    # yuv420p पिक्सल फॉर्मेट (ग्लिच-फ्री वीडियो के लिए अनिवार्य)
     clip.write_videofile(
         output_path,
         fps=24,
@@ -73,10 +75,15 @@ async def process_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     caption = msg.caption.strip()
+    is_long = "#long" in caption.lower()
+    
+    # हैशटैग हटाकर क्लीन डायलॉग निकालना
+    clean_caption = caption.replace("#long", "").replace("#shorts", "").strip()
+
     girl_line = ""
     duck_line = ""
 
-    for line in caption.split("\n"):
+    for line in clean_caption.split("\n"):
         clean = line.strip()
         if clean.lower().startswith("girl:"):
             girl_line = clean.split(":", 1)[1].strip()
@@ -84,7 +91,7 @@ async def process_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
             duck_line = clean.split(":", 1)[1].strip()
 
     if not girl_line and not duck_line:
-        girl_line = caption
+        girl_line = clean_caption
 
     status = await msg.reply_text("1/2: आवाज़ें तैयार हो रही हैं...")
     photo_file = await msg.photo[-1].get_file()
@@ -100,14 +107,15 @@ async def process_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
             a2 = await generate_speech(duck_line, "duck")
             audio_files.append(a2)
 
-        await status.edit_text("2/2: वीडियो रेंडर हो रहा है...")
+        format_name = "Long Video (16:9)" if is_long else "Shorts (9:16)"
+        await status.edit_text(f"2/2: {format_name} वीडियो बन रहा है...")
 
         loop = asyncio.get_event_loop()
-        video_path = await loop.run_in_executor(None, build_animated_video, img_path, audio_files)
+        video_path = await loop.run_in_executor(None, build_animated_video, img_path, audio_files, is_long)
 
         await update.message.reply_video(
             video=open(video_path, 'rb'),
-            caption="🎬 आपका कार्टून वीडियो तैयार है!"
+            caption=f"🎬 आपका कार्टून {format_name} तैयार है!"
         )
         await status.delete()
 
@@ -122,4 +130,4 @@ if __name__ == "__main__":
         app.add_handler(CommandHandler("start", start))
         app.add_handler(MessageHandler(filters.PHOTO & filters.Caption(), process_video))
         app.run_polling()
-    
+        
