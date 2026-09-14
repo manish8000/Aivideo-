@@ -47,42 +47,45 @@ async def process_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await msg.reply_text("कृपया 'Girl:' और 'Duck:' लिखकर डायलॉग भेजें।")
         return
 
-    status = await msg.reply_text("1/3: दोनों की आवाज़ तैयार हो रही है...")
+    status = await msg.reply_text("1/3: आवाज़ तैयार हो रही है...")
     photo_file = await msg.photo[-1].get_file()
     img_path = "input_char.jpg"
     await photo_file.download_to_drive(img_path)
 
     try:
-        tts_client = Client("mrfakename/E2-F5-TTS")
+        # F5-TTS का प्राइमरी और बैकअप स्पेस
+        try:
+            tts_client = Client("SWivid/F5-TTS")
+        except Exception:
+            tts_client = Client("hf-audio/F5-TTS")
+
+        active_audio = None
 
         # 1. बच्ची की आवाज
-        girl_audio = None
-        if girl_line:
+        if girl_line and os.path.exists(GIRL_VOICE):
             res1 = tts_client.predict(
-                ref_audio_input=handle_file(GIRL_VOICE),
-                ref_text_input="mera sample audio",
-                gen_text_input=girl_line,
+                ref_audio_orig=handle_file(GIRL_VOICE),
+                ref_text="sample audio",
+                gen_text=girl_line,
                 remove_silence=False,
-                fn_index=0
+                api_name="/basic_tts"
             )
-            girl_audio = res1[0]
+            active_audio = res1[0]
 
-        # 2. बत्तख की आवाज
-        duck_audio = None
-        if duck_line and os.path.exists(DUCK_VOICE):
+        # 2. बत्तख की आवाज (अगर बच्ची की लाइन नहीं है तो बत्तख का ऑडियो)
+        if not active_audio and duck_line and os.path.exists(DUCK_VOICE):
             res2 = tts_client.predict(
-                ref_audio_input=handle_file(DUCK_VOICE),
-                ref_text_input="mera sample audio",
-                gen_text_input=duck_line,
+                ref_audio_orig=handle_file(DUCK_VOICE),
+                ref_text="sample audio",
+                gen_text=duck_line,
                 remove_silence=False,
-                fn_index=0
+                api_name="/basic_tts"
             )
-            duck_audio = res2[0]
+            active_audio = res2[0]
 
-        await status.edit_text("2/3: लिप-सिंक वीडियो बन रहा है...")
+        await status.edit_text("2/3: वीडियो रेंडर हो रहा है...")
 
-        # जो भी ऑडियो तैयार हुआ, उससे SadTalker चलाएं
-        active_audio = girl_audio if girl_audio else duck_audio
+        # लिप-सिंक स्पेस
         anim_client = Client("vinthony/SadTalker")
         video_res = anim_client.predict(
             source_image=handle_file(img_path),
@@ -95,7 +98,7 @@ async def process_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await msg.reply_video(video=open(video_path, 'rb'))
 
     except Exception as e:
-        await msg.reply_text(f"एरर: {str(e)}")
+        await msg.reply_text(f"एरर आया: {str(e)}\n\n(HuggingFace स्पेस बिजी हो सकता है, 1-2 मिनट बाद दोबारा कोशिश करें)")
 
 if __name__ == "__main__":
     threading.Thread(target=run_web, daemon=True).start()
