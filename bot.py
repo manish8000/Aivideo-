@@ -1,5 +1,7 @@
 import os
 import io
+import threading
+from http.server import HTTPServer, BaseHTTPRequestHandler
 import requests
 from PIL import Image
 from rembg import remove
@@ -11,6 +13,18 @@ from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, fil
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 REPLICATE_API_TOKEN = os.getenv("REPLICATE_API_TOKEN")
 
+# Koyeb Health Check को संतुष्ट करने के लिए छोटा डमी सर्वर
+class DummyServer(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b"Bot is healthy and running!")
+
+def run_dummy_server():
+    port = int(os.environ.get("PORT", 8000))
+    server = HTTPServer(("0.0.0.0", port), DummyServer)
+    server.serve_forever()
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("नमस्ते! फोटो भेजें, मैं पारदर्शी कार्टून PNG बना दूंगा।")
 
@@ -21,7 +35,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         input_path = "input.jpg"
         await photo_file.download_to_drive(input_path)
 
-        await status_msg.edit_text("कार्टून स्टाइल बनाया जा रहा है...")
+        await status_msg.edit_text("कार्टून बनाया जा रहा है...")
         with open(input_path, "rb") as img:
             output = replicate.run(
                 "fofr/face-to-sticker:76298fc8dabb42534570d988e5625bde3f12603ac1a8123d4ac1739fb5c8b5df",
@@ -46,6 +60,9 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"त्रुटि: {e}")
 
 def main():
+    # डमी वेब सर्वर को बैकग्राउंड थ्रेड में चालू करें
+    threading.Thread(target=run_dummy_server, daemon=True).start()
+
     app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
@@ -53,4 +70,4 @@ def main():
 
 if __name__ == "__main__":
     main()
-            
+    
