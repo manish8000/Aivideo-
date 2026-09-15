@@ -1,5 +1,4 @@
 import os
-import time
 import base64
 import asyncio
 import threading
@@ -8,7 +7,7 @@ import requests
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
 
-# API Keys
+# Credentials
 TELEGRAM_BOT_TOKEN = "8815666314:AAHPEMUcIaaTJMn-Q9RMEZLEZ58951D7Kyk"
 DID_API_KEY = os.getenv("DID_API_KEY", "").strip()
 
@@ -23,6 +22,20 @@ def run_http_server():
     port = int(os.environ.get("PORT", 8000))
     server = HTTPServer(("0.0.0.0", port), HealthCheckHandler)
     server.serve_forever()
+
+def upload_to_litterbox(file_path):
+    """फोटो को डायरेक्ट .jpg लिंक में बदलने के लिए Litterbox पर अपलोड"""
+    url = "https://litterbox.catbox.moe/resources/internals/api.php"
+    data = {
+        "reqtype": "fileupload",
+        "time": "1h"  # 1 घंटे के लिए वैलिड डायरेक्ट लिंक
+    }
+    with open(file_path, "rb") as f:
+        files = {"fileToUpload": f}
+        res = requests.post(url, data=data, files=files)
+    if res.status_code == 200 and res.text.startswith("http"):
+        return res.text.strip()
+    return None
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
@@ -42,15 +55,13 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         photo_file = await update.message.photo[-1].get_file()
         await photo_file.download_to_drive(file_path)
 
-        with open(file_path, "rb") as f:
-            upload_res = requests.post("https://tmpfiles.org/api/v1/upload", files={"file": f}).json()
-        
-        if "data" not in upload_res or "url" not in upload_res["data"]:
-            await status_msg.edit_text("इमेज सर्वर डाउन है, कृपया थोड़ी देर बाद प्रयास करें।")
+        # डायरेक्ट .jpg इमेज URL प्राप्त करना
+        img_url = upload_to_litterbox(file_path)
+        if not img_url:
+            await status_msg.edit_text("इमेज अपलोड विफल रही, कृपया दोबारा प्रयास करें।")
             return
 
-        img_url = upload_res["data"]["url"].replace("tmpfiles.org/", "tmpfiles.org/dl/")
-
+        # D-ID ऑथराइजेशन हेडर
         if ":" in DID_API_KEY:
             auth_header = "Basic " + base64.b64encode(DID_API_KEY.encode()).decode()
         else:
@@ -96,14 +107,14 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 result_url = check_res.get("result_url")
                 break
             elif check_res.get("status") == "error":
-                await status_msg.edit_text("वीडियो जनरेट नहीं हो सका। कृपया सामने से ली गई साफ फोटो भेजें।")
+                await status_msg.edit_text("वीडियो जनरेट नहीं हो सका। कृपया सामने से चेहरा दिखने वाली साफ फोटो भेजें।")
                 return
 
         if result_url:
             await update.message.reply_video(video=result_url, caption=f"🗣️: {user_text}")
             await status_msg.delete()
         else:
-            await status_msg.edit_text("टाइमआउट: रेंडरिंग में बहुत ज्यादा समय लगा।")
+            await status_msg.edit_text("टाइमआउट: वीडियो रेंडरिंग में बहुत अधिक समय लगा।")
 
     except Exception as e:
         await update.message.reply_text(f"सिस्टम एरर: {e}")
@@ -123,7 +134,6 @@ async def main():
     await app.start()
     await app.updater.start_polling()
 
-    # बॉट को चालू रखने के लिए अनिश्चित काल तक प्रतीक्षा
     while True:
         await asyncio.sleep(3600)
 
