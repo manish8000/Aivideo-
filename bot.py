@@ -12,7 +12,8 @@ from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, fil
 
 # आपके API Tokens
 TELEGRAM_BOT_TOKEN = "8815666314:AAHPEMUcIaaTJMn-Q9RMEZLEZ58951D7Kyk"
-REPLICATE_API_TOKEN = "r8_doXGAHoA0EXYPpFPoBceEnkoPYLg7gv08SI2p"
+REPLICATE_API_TOKEN = os.getenv("REPLICATE_API_TOKEN")
+
 
 os.environ["REPLICATE_API_TOKEN"] = REPLICATE_API_TOKEN
 
