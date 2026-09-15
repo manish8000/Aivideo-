@@ -1,6 +1,2 @@
-python-telegram-bot
-replicate
-rembg[cpu]
-onnxruntime
-pillow
+python-telegram-bot==21.10
 requests
