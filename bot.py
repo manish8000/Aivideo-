@@ -10,12 +10,12 @@ import replicate
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
 
-# आपके API Tokens
+# API Tokens
 TELEGRAM_BOT_TOKEN = "8815666314:AAHPEMUcIaaTJMn-Q9RMEZLEZ58951D7Kyk"
 REPLICATE_API_TOKEN = os.getenv("REPLICATE_API_TOKEN")
 
-
-os.environ["REPLICATE_API_TOKEN"] = REPLICATE_API_TOKEN
+if REPLICATE_API_TOKEN:
+    os.environ["REPLICATE_API_TOKEN"] = REPLICATE_API_TOKEN
 
 # Koyeb Web Service के Health Check को 200 OK देने के लिए डमी HTTP सर्वर
 class HealthCheckHandler(BaseHTTPRequestHandler):
@@ -42,8 +42,12 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await status_msg.edit_text("AI कार्टून स्टाइल तैयार कर रहा है...")
         with open(input_path, "rb") as img:
             output = replicate.run(
-                "fofr/face-to-sticker:76298fc8dabb42534570d988e5625bde3f12603ac1a8123d4ac1739fb5c8b5df",
-                input={"image": img, "steps": 20, "prompt": "cartoon vector sticker, clean edges"}
+                "fofr/face-to-sticker",
+                input={
+                    "image": img,
+                    "steps": 20,
+                    "prompt": "cartoon vector sticker, clean edges"
+                }
             )
 
         img_url = output[0] if isinstance(output, list) else output
